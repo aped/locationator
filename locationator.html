@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Interactive US Map - Property Locations</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        #map { 
+            height: 90vh; 
+            width: 100vw; 
+        }
+        #datePicker, #loadButton, #loadingText {
+            position: absolute;
+            z-index: 999;  /* To ensure the elements shows on top of the map */
+        }
+        #datePicker, #loadButton {
+            top: 50px;  /* Move them down to avoid conflict with map controls */
+        }
+        #datePicker {
+            left: 10px;
+        }
+        #loadButton {
+            left: 150px;
+        }
+        #loadingText {
+            top: 10px;
+            left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <input type="date" id="datePicker">
+    <button id="loadButton">Load Data</button>
+    <p id="loadingText"></p>
+    <div id="map"></div>
+    
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        // Center on the US
+        var myMap = L.map('map', {zoomControl: false}).setView([37.8, -96], 4);  // Disable default zoom control
+
+        // Add new zoom control with desired position
+        L.control.zoom({
+             position: 'topright'
+        }).addTo(myMap);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
+        }).addTo(myMap);
+
+        var markers = L.layerGroup().addTo(myMap);
+
+        document.getElementById('loadButton').addEventListener('click', async function() {
+            markers.clearLayers();  // Clear existing markers
+
+            var startDate = new Date(document.getElementById('datePicker').value);
+            var endDate = new Date(startDate.getTime());
+            endDate.setDate(endDate.getDate() + 30);
+
+            // YYYY-MM-DD format
+            var startDateFormat = startDate.toISOString().split('T')[0];
+            var endDateFormat = endDate.toISOString().split('T')[0];
+            
+            var allDeets = [];
+
+            var loadingText = document.getElementById('loadingText');
+            loadingText.textContent = 'Loading...';
+
+            var promiseChunks = [];
+            var chunkSize = 4;
+            var promises = [];
+
+            for (let lowerLeftLat = 30; lowerLeftLat <= 50; lowerLeftLat += 2) {
+                for (let lowerLeftLon = -125; lowerLeftLon <= -70; lowerLeftLon += 2) {
+                    let upperRightLat = lowerLeftLat + 2;
+                    let upperRightLon = lowerLeftLon + 2;
+                    let reqUrl = `https://www.hellolanding.com/api/v1/properties.json?start_date=${startDateFormat}&available_from_end_date=${endDateFormat}&sw_latitude=${lowerLeftLat}&sw_longitude=${lowerLeftLon}&ne_latitude=${upperRightLat}&ne_longitude=${upperRightLon}&standby=true`;
+                    promises.push(fetch(reqUrl, {
+                        method: 'GET',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            //'Authorization': 'Bearer YOUR_API_KEY'  // Uncomment this line and replace YOUR_API_KEY with your actual API key if required
+                        }
+                    }));
+                    if (promises.length === chunkSize) {
+                        promiseChunks.push(promises);
+                        promises = [];
+                    }
+                }
+            }
+            if (promises.length > 0) {
+                promiseChunks.push(promises);
+            }
+            
+            for (let chunk of promiseChunks) {
+                await Promise.all(chunk.map(request =>
+                    request.then(response => {
+                        if (!response.ok) {
+                            throw new Error(`HTTP error! status: ${response.status}`);
+                        }
+                        return response.json();
+                    })
+                    .then(json => {
+                        let keys = ['id', 'name', 'address', 'city', 'is_premier_property', 'landing_lite', 'latitude', 'longitude'];
+                        let deets = json.data.properties.map(prop => {
+                            let obj = {};
+                            keys.forEach(key => obj[key] = prop[key] || null);
+                            return obj;
+                        });
+                        allDeets.push(...deets);
+                        console.log(`Updated allDeets. Length: ${allDeets.length}`);  // Debugging output
+                        deets.forEach(function(obj) {
+                            var marker = L.marker([obj.latitude, obj.longitude]);
+                            var googleMapsUrl = `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(obj.address)}`;
+                            marker.bindPopup(`<b><a href="${googleMapsUrl}" target="_blank">${obj.name}</a></b><br>${obj.address}, ${obj.city}`);
+                            markers.addLayer(marker);
+                        });
+                    })
+                    .catch(e => {
+                        console.log(e);  // Debugging output for HTTP error
+                    }))
+                );
+            }
+            
+            // All requests completed
+            loadingText.textContent = 'Done loading';  // Show done loading text
+        });
+    </script>
+</body>
+</html>
